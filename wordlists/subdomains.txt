@@ -1,0 +1,212 @@
+# Common Subdomains Wordlist for FootPrintX
+# This file contains common subdomain names for enumeration
+# Format: one subdomain per line (without the domain)
+
+# Web servers
+www
+www2
+www3
+web
+webmail
+mail
+email
+pop
+pop3
+imap
+smtp
+
+# Development & Testing
+dev
+test
+testing
+stage
+staging
+demo
+beta
+alpha
+preview
+sandbox
+
+# Administrative
+admin
+administrator
+cpanel
+control
+panel
+manage
+management
+login
+secure
+
+# API & Services
+api
+rest
+soap
+service
+services
+webservice
+ws
+gateway
+proxy
+
+# Infrastructure
+ns1
+ns2
+ns3
+ns4
+dns
+mx
+mx1
+mx2
+cdn
+cache
+static
+
+# Applications
+app
+application
+mobile
+m
+blog
+forum
+shop
+store
+wiki
+help
+support
+docs
+documentation
+
+# Common services
+ftp
+sftp
+ssh
+vpn
+remote
+rdp
+citrix
+owa
+exchange
+sharepoint
+
+# Cloud & CDN
+cloud
+aws
+azure
+gcp
+s3
+cloudfront
+cdn1
+cdn2
+assets
+img
+images
+static
+media
+
+# Monitoring & Tools
+monitor
+monitoring
+nagios
+zabbix
+grafana
+kibana
+splunk
+elk
+log
+logs
+
+# Databases
+db
+database
+mysql
+postgres
+oracle
+mssql
+mongo
+redis
+elastic
+
+# Backup & Archive
+backup
+bak
+archive
+old
+legacy
+deprecated
+
+# Regional
+us
+eu
+asia
+uk
+ca
+au
+de
+fr
+jp
+cn
+
+# Load balancing
+lb
+load
+loadbalancer
+ha
+cluster
+node1
+node2
+node3
+
+# Mobile & Apps
+mobile
+android
+ios
+app-store
+play
+
+# Social & Marketing
+social
+facebook
+twitter
+linkedin
+youtube
+instagram
+
+# E-commerce
+cart
+checkout
+payment
+billing
+invoice
+order
+orders
+
+# Communication
+chat
+im
+sip
+voip
+conference
+meet
+zoom
+
+# Security
+firewall
+ids
+ips
+waf
+security
+sec
+audit
+
+# Misc common
+old
+new
+temp
+tmp
+test1
+test2
+test3
+prod
+production
+live
