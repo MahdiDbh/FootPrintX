@@ -381,6 +381,427 @@ EOF
     fi
 }
 
+
+dns_zone_transfer() {
+    log "INFO" "Attempting DNS Zone Transfer (AXFR)..."
+    
+    cat >> "$REPORT_FILE" << EOF
+
+## 🔓 DNS Zone Transfer Test
+
+EOF
+    
+    local nameservers=$(dig +short NS "$DOMAIN" 2>/dev/null)
+    local vulnerable=0
+    
+    if [ ! -z "$nameservers" ]; then
+        cat >> "$REPORT_FILE" << EOF
+### Testing nameservers for AXFR vulnerability...
+
+EOF
+        while IFS= read -r ns; do
+            [ -z "$ns" ] && continue
+            log "DEBUG" "Testing zone transfer on: $ns"
+            
+            local axfr_result=$(dig @"$ns" "$DOMAIN" AXFR 2>/dev/null | grep -v '^;' | grep -v '^$')
+            
+            if [ ! -z "$axfr_result" ] && ! echo "$axfr_result" | grep -q "Transfer failed"; then
+                cat >> "$REPORT_FILE" << EOF
+#### ⚠️ VULNERABLE: $ns
+\`\`\`
+$axfr_result
+\`\`\`
+
+EOF
+                vulnerable=1
+                log "WARN" "Zone transfer successful on $ns - SECURITY ISSUE!"
+            else
+                cat >> "$REPORT_FILE" << EOF
+✅ **$ns** - Zone transfer denied (secure)
+
+EOF
+                log "DEBUG" "Zone transfer denied on $ns"
+            fi
+        done <<< "$nameservers"
+        
+        if [ $vulnerable -eq 0 ]; then
+            cat >> "$REPORT_FILE" << EOF
+
+**Result:** All nameservers properly configured against zone transfer attacks.
+
+EOF
+        fi
+    else
+        cat >> "$REPORT_FILE" << EOF
+❌ **Unable to retrieve nameservers**
+
+EOF
+    fi
+}
+
+
+email_harvesting() {
+    log "INFO" "Harvesting email addresses..."
+    
+    cat >> "$REPORT_FILE" << EOF
+
+## 📧 Email Harvesting
+
+EOF
+    
+    local emails=()
+    
+    # Search via Google (if available)
+    local google_emails=$(curl -s -A "Mozilla/5.0" "https://www.google.com/search?q=@${DOMAIN}" 2>/dev/null | \
+        grep -Eo '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}' | \
+        grep "@${DOMAIN}" | sort -u)
+    
+    # Search in DNS records
+    local dns_emails=$(dig TXT "$DOMAIN" +short 2>/dev/null | \
+        grep -Eo '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
+    
+    # Common email patterns
+    local common_prefixes=("info" "contact" "admin" "support" "sales" "hello" "mail" "no-reply" "noreply")
+    
+    # Combine all findings
+    emails+=($google_emails)
+    emails+=($dns_emails)
+    
+    if [ ${#emails[@]} -gt 0 ]; then
+        cat >> "$REPORT_FILE" << EOF
+### 📩 Discovered Email Addresses
+
+| Email | Source |
+|-------|--------|
+EOF
+        for email in "${emails[@]}"; do
+            [ -z "$email" ] && continue
+            echo "| $email | Passive Search |" >> "$REPORT_FILE"
+        done
+        
+        log "INFO" "Found ${#emails[@]} email address(es)"
+    else
+        cat >> "$REPORT_FILE" << EOF
+❌ **No email addresses found**
+
+EOF
+        log "INFO" "No emails discovered"
+    fi
+    
+    cat >> "$REPORT_FILE" << EOF
+
+### 🔍 Common Email Patterns to Test
+\`\`\`
+EOF
+    
+    for prefix in "${common_prefixes[@]}"; do
+        echo "${prefix}@${DOMAIN}" >> "$REPORT_FILE"
+    done
+    
+    cat >> "$REPORT_FILE" << EOF
+\`\`\`
+
+EOF
+}
+
+
+security_headers_analysis() {
+    log "INFO" "Analyzing security headers..."
+    
+    cat >> "$REPORT_FILE" << EOF
+
+## 🛡️ Security Headers Analysis
+
+EOF
+    
+    local headers=$(curl -s -I "https://$DOMAIN" 2>/dev/null)
+    
+    if [ -z "$headers" ]; then
+        headers=$(curl -s -I "http://$DOMAIN" 2>/dev/null)
+    fi
+    
+    if [ ! -z "$headers" ]; then
+        cat >> "$REPORT_FILE" << EOF
+### Security Headers Status
+
+| Header | Status | Value |
+|--------|--------|-------|
+EOF
+        
+        # Check critical security headers
+        local security_headers=(
+            "Strict-Transport-Security"
+            "Content-Security-Policy"
+            "X-Frame-Options"
+            "X-Content-Type-Options"
+            "X-XSS-Protection"
+            "Referrer-Policy"
+            "Permissions-Policy"
+        )
+        
+        for header in "${security_headers[@]}"; do
+            local value=$(echo "$headers" | grep -i "^${header}:" | cut -d: -f2- | sed 's/^ *//' | head -1)
+            if [ ! -z "$value" ]; then
+                echo "| $header | ✅ Present | \`${value:0:50}\` |" >> "$REPORT_FILE"
+            else
+                echo "| $header | ❌ Missing | - |" >> "$REPORT_FILE"
+            fi
+        done
+        
+        cat >> "$REPORT_FILE" << EOF
+
+### 🔍 Security Assessment
+
+EOF
+        
+        # Assess security posture
+        local hsts=$(echo "$headers" | grep -i "Strict-Transport-Security")
+        local csp=$(echo "$headers" | grep -i "Content-Security-Policy")
+        local xframe=$(echo "$headers" | grep -i "X-Frame-Options")
+        
+        if [ -z "$hsts" ]; then
+            echo "- ⚠️ **HSTS not implemented** - Vulnerable to SSL stripping attacks" >> "$REPORT_FILE"
+        fi
+        
+        if [ -z "$csp" ]; then
+            echo "- ⚠️ **No CSP detected** - Potential XSS vulnerability" >> "$REPORT_FILE"
+        fi
+        
+        if [ -z "$xframe" ]; then
+            echo "- ⚠️ **X-Frame-Options missing** - Vulnerable to clickjacking" >> "$REPORT_FILE"
+        fi
+        
+        log "INFO" "Security headers analysis completed"
+    else
+        cat >> "$REPORT_FILE" << EOF
+❌ **Unable to retrieve headers for security analysis**
+
+EOF
+    fi
+    
+    cat >> "$REPORT_FILE" << EOF
+
+EOF
+}
+
+
+port_scanning() {
+    log "INFO" "Detecting open ports (passive methods)..."
+    
+    cat >> "$REPORT_FILE" << EOF
+
+## 🔌 Common Ports Detection
+
+EOF
+    
+    local common_ports=(80 443 21 22 25 53 110 143 3306 5432 8080 8443)
+    local open_ports=()
+    
+    cat >> "$REPORT_FILE" << EOF
+### Testing common ports (passive)...
+
+| Port | Service | Status |
+|------|---------|--------|
+EOF
+    
+    for port in "${common_ports[@]}"; do
+        local service=""
+        case $port in
+            80) service="HTTP" ;;
+            443) service="HTTPS" ;;
+            21) service="FTP" ;;
+            22) service="SSH" ;;
+            25) service="SMTP" ;;
+            53) service="DNS" ;;
+            110) service="POP3" ;;
+            143) service="IMAP" ;;
+            3306) service="MySQL" ;;
+            5432) service="PostgreSQL" ;;
+            8080) service="HTTP-ALT" ;;
+            8443) service="HTTPS-ALT" ;;
+        esac
+        
+        # Passive detection via HTTP/HTTPS
+        if timeout 2 bash -c "echo >/dev/tcp/$DOMAIN/$port" 2>/dev/null; then
+            echo "| $port | $service | ✅ Open |" >> "$REPORT_FILE"
+            open_ports+=("$port")
+            log "DEBUG" "Port $port ($service) appears open"
+        else
+            echo "| $port | $service | ❌ Closed/Filtered |" >> "$REPORT_FILE"
+        fi
+    done
+    
+    cat >> "$REPORT_FILE" << EOF
+
+**Note:** This is passive detection. Use nmap for comprehensive port scanning.
+
+EOF
+    
+    if [ ${#open_ports[@]} -gt 0 ]; then
+        log "INFO" "Detected ${#open_ports[@]} potentially open port(s)"
+    fi
+}
+
+
+cloud_infrastructure_detection() {
+    log "INFO" "Detecting cloud infrastructure..."
+    
+    cat >> "$REPORT_FILE" << EOF
+
+## ☁️ Cloud Infrastructure Detection
+
+EOF
+    
+    local ip_addresses=$(dig +short "$DOMAIN" A 2>/dev/null)
+    
+    if [ ! -z "$ip_addresses" ]; then
+        cat >> "$REPORT_FILE" << EOF
+### IP Analysis
+
+| IP Address | Cloud Provider | Region |
+|------------|----------------|--------|
+EOF
+        
+        while IFS= read -r ip; do
+            [ -z "$ip" ] && continue
+            
+            # AWS detection
+            local whois_result=$(whois "$ip" 2>/dev/null)
+            local cloud_provider="Unknown"
+            local org=""
+            
+            if echo "$whois_result" | grep -qi "amazon"; then
+                cloud_provider="AWS (Amazon)"
+                org=$(echo "$whois_result" | grep -i "OrgName" | head -1 | cut -d: -f2 | sed 's/^ *//')
+            elif echo "$whois_result" | grep -qi "google"; then
+                cloud_provider="Google Cloud"
+                org=$(echo "$whois_result" | grep -i "OrgName" | head -1 | cut -d: -f2 | sed 's/^ *//')
+            elif echo "$whois_result" | grep -qi "microsoft"; then
+                cloud_provider="Azure (Microsoft)"
+                org=$(echo "$whois_result" | grep -i "OrgName" | head -1 | cut -d: -f2 | sed 's/^ *//')
+            elif echo "$whois_result" | grep -qi "digitalocean"; then
+                cloud_provider="DigitalOcean"
+                org="DigitalOcean LLC"
+            elif echo "$whois_result" | grep -qi "cloudflare"; then
+                cloud_provider="Cloudflare"
+                org="Cloudflare Inc"
+            fi
+            
+            echo "| $ip | $cloud_provider | ${org:-N/A} |" >> "$REPORT_FILE"
+            log "DEBUG" "IP $ip - Provider: $cloud_provider"
+        done <<< "$ip_addresses"
+        
+        log "INFO" "Cloud infrastructure detection completed"
+    else
+        cat >> "$REPORT_FILE" << EOF
+❌ **No IP addresses found**
+
+EOF
+    fi
+    
+    cat >> "$REPORT_FILE" << EOF
+
+### 🔍 CDN Detection
+
+EOF
+    
+    local cname_records=$(dig +short "$DOMAIN" CNAME 2>/dev/null)
+    if [ ! -z "$cname_records" ]; then
+        cat >> "$REPORT_FILE" << EOF
+\`\`\`
+$cname_records
+\`\`\`
+
+EOF
+        
+        if echo "$cname_records" | grep -qi "cloudflare"; then
+            echo "**CDN Detected:** Cloudflare" >> "$REPORT_FILE"
+        elif echo "$cname_records" | grep -qi "cloudfront"; then
+            echo "**CDN Detected:** AWS CloudFront" >> "$REPORT_FILE"
+        elif echo "$cname_records" | grep -qi "akamai"; then
+            echo "**CDN Detected:** Akamai" >> "$REPORT_FILE"
+        fi
+    else
+        echo "No CDN detected" >> "$REPORT_FILE"
+    fi
+    
+    cat >> "$REPORT_FILE" << EOF
+
+EOF
+}
+
+
+advanced_subdomain_enum() {
+    log "INFO" "Advanced subdomain enumeration..."
+    
+    cat >> "$REPORT_FILE" << EOF
+
+## 🌐 Advanced Subdomain Enumeration
+
+EOF
+    
+    # Certificate transparency logs
+    log "DEBUG" "Querying certificate transparency..."
+    local ct_subdomains=$(curl -s "https://crt.sh/?q=%.${DOMAIN}&output=json" 2>/dev/null | \
+        grep -Po '"name_value":"[^"]*"' | cut -d'"' -f4 | sort -u | head -50)
+    
+    if [ ! -z "$ct_subdomains" ]; then
+        cat >> "$REPORT_FILE" << EOF
+### 📜 Certificate Transparency Logs
+
+| Subdomain | Status |
+|-----------|--------|
+EOF
+        
+        while IFS= read -r subdomain; do
+            [ -z "$subdomain" ] && continue
+            subdomain=$(echo "$subdomain" | tr -d '*' | xargs)
+            
+            if host "$subdomain" >/dev/null 2>&1; then
+                local ip=$(dig +short "$subdomain" A 2>/dev/null | head -1)
+                echo "| $subdomain | ✅ Active ($ip) |" >> "$REPORT_FILE"
+            else
+                echo "| $subdomain | ❌ Inactive |" >> "$REPORT_FILE"
+            fi
+        done <<< "$ct_subdomains"
+    fi
+    
+    cat >> "$REPORT_FILE" << EOF
+
+### 🔍 DNS Brute Force (Top Results)
+
+EOF
+    
+    # Try common subdomains
+    local common_subs=("www" "mail" "ftp" "admin" "test" "dev" "staging" "api" "blog" 
+                       "portal" "vpn" "remote" "webmail" "secure" "m" "mobile" 
+                       "support" "help" "shop" "store" "cdn" "static" "img" "images")
+    
+    local found=0
+    for sub in "${common_subs[@]}"; do
+        local full_sub="${sub}.${DOMAIN}"
+        if host "$full_sub" >/dev/null 2>&1; then
+            local ip=$(dig +short "$full_sub" A 2>/dev/null | head -1)
+            if [ $found -eq 0 ]; then
+                cat >> "$REPORT_FILE" << EOF
+| Subdomain | IP Address |
+|-----------|------------|
+EOF
+                found=1
+            fi
+            echo "| $full_sub | $ip |" >> "$REPORT_FILE"
+        fi
+    done
+    
+    if [ $found -eq 0 ]; then
+        echo "No additional subdomains found" >> "$REPORT_FILE"
+    fi
+    
+    cat >> "$REPORT_FILE" << EOF
+
+EOF
+}
+
 init_report() {
     REPORT_FILE="${OUTPUT_DIR}/${DOMAIN}_${TIMESTAMP}.md"
     mkdir -p "$OUTPUT_DIR"
@@ -412,13 +833,20 @@ finalize_report() {
 ### 🛠️ Tools used
 - WHOIS lookup
 - DNS enumeration (dig, host, nslookup)
+- DNS Zone Transfer testing (AXFR)
+- Advanced subdomain enumeration (Certificate Transparency)
+- Email harvesting
 - Passive web search
-- SSL analysis (crt.sh)
+- SSL/TLS certificate analysis (crt.sh)
 - Technology detection (whatweb, curl)
+- Security headers analysis
+- Common port detection
+- Cloud infrastructure identification
 
 ### ⚠️ Disclaimer
 This report was generated for passive reconnaissance purposes only. 
 All information comes from publicly available sources.
+Use this tool only on domains you have permission to test.
 
 ---
 *Made with ❤️ by MahdiDbh*
@@ -482,9 +910,16 @@ main() {
     
     whois_lookup
     dns_enumeration
+    dns_zone_transfer
+    advanced_subdomain_enum
+    email_harvesting
     web_search
     ssl_analysis
     tech_detection
+    security_headers_analysis
+    port_scanning
+    cloud_infrastructure_detection
+    
     finalize_report
     
     log "INFO" "=== RECONNAISSANCE COMPLETED ==="
