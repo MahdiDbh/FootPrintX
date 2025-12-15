@@ -1,11 +1,4 @@
 #!/bin/bash
-
-#################################################################
-# FootPrintX Installation Script
-# Description: Install FootPrintX globally on the system
-# Author: MahdiDbh
-#################################################################
-
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
