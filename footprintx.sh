@@ -185,9 +185,6 @@ $dns_result
 EOF
         fi
     done
-    
-    subdomain_enumeration
-    subdomain_enumeration
 }
 
 subdomain_enumeration() {
@@ -586,60 +583,54 @@ EOF
 
 
 port_scanning() {
-    log "INFO" "Detecting open ports (passive methods)..."
+    log "INFO" "Detecting common web services..."
     
     cat >> "$REPORT_FILE" << EOF
 
-## 🔌 Common Ports Detection
+## 🔌 Web Services Detection
 
 EOF
     
-    local common_ports=(80 443 21 22 25 53 110 143 3306 5432 8080 8443)
-    local open_ports=()
+    local services=()
     
-    cat >> "$REPORT_FILE" << EOF
-### Testing common ports (passive)...
-
-| Port | Service | Status |
-|------|---------|--------|
-EOF
-    
-    for port in "${common_ports[@]}"; do
-        local service=""
-        case $port in
-            80) service="HTTP" ;;
-            443) service="HTTPS" ;;
-            21) service="FTP" ;;
-            22) service="SSH" ;;
-            25) service="SMTP" ;;
-            53) service="DNS" ;;
-            110) service="POP3" ;;
-            143) service="IMAP" ;;
-            3306) service="MySQL" ;;
-            5432) service="PostgreSQL" ;;
-            8080) service="HTTP-ALT" ;;
-            8443) service="HTTPS-ALT" ;;
-        esac
-        
-        # Passive detection via HTTP/HTTPS
-        if timeout 2 bash -c "echo >/dev/tcp/$DOMAIN/$port" 2>/dev/null; then
-            echo "| $port | $service | ✅ Open |" >> "$REPORT_FILE"
-            open_ports+=("$port")
-            log "DEBUG" "Port $port ($service) appears open"
-        else
-            echo "| $port | $service | ❌ Closed/Filtered |" >> "$REPORT_FILE"
-        fi
-    done
-    
-    cat >> "$REPORT_FILE" << EOF
-
-**Note:** This is passive detection. Use nmap for comprehensive port scanning.
-
-EOF
-    
-    if [ ${#open_ports[@]} -gt 0 ]; then
-        log "INFO" "Detected ${#open_ports[@]} potentially open port(s)"
+    # Test HTTP
+    if curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://$DOMAIN" 2>/dev/null | grep -q "[0-9]"; then
+        services+=("HTTP (Port 80)")
+        log "DEBUG" "HTTP service detected"
     fi
+    
+    # Test HTTPS
+    if curl -s -o /dev/null -w "%{http_code}" --max-time 3 "https://$DOMAIN" 2>/dev/null | grep -q "[0-9]"; then
+        services+=("HTTPS (Port 443)")
+        log "DEBUG" "HTTPS service detected"
+    fi
+    
+    # Check MX records for mail service
+    if dig +short MX "$DOMAIN" 2>/dev/null | grep -q "."; then
+        services+=("Mail Service (MX records found)")
+        log "DEBUG" "Mail service detected"
+    fi
+    
+    if [ ${#services[@]} -gt 0 ]; then
+        cat >> "$REPORT_FILE" << EOF
+### 🌐 Active Services
+
+| Service | Status |
+|---------|--------|
+EOF
+        for service in "${services[@]}"; do
+            echo "| $service | ✅ Active |" >> "$REPORT_FILE"
+        done
+        log "INFO" "Detected ${#services[@]} active service(s)"
+    else
+        echo "❌ **No web services detected**" >> "$REPORT_FILE"
+    fi
+    
+    cat >> "$REPORT_FILE" << EOF
+
+**Note:** For comprehensive port scanning, use nmap: \`nmap -p- $DOMAIN\`
+
+EOF
 }
 
 
@@ -652,43 +643,36 @@ cloud_infrastructure_detection() {
 
 EOF
     
-    local ip_addresses=$(dig +short "$DOMAIN" A 2>/dev/null)
+    local ip_addresses=$(dig +short "$DOMAIN" A 2>/dev/null | head -5)
     
     if [ ! -z "$ip_addresses" ]; then
         cat >> "$REPORT_FILE" << EOF
 ### IP Analysis
 
-| IP Address | Cloud Provider | Region |
-|------------|----------------|--------|
+| IP Address | Cloud Provider |
+|------------|----------------|
 EOF
+        
+        # Do one WHOIS lookup for the first IP only to save time
+        local first_ip=$(echo "$ip_addresses" | head -1)
+        local whois_result=$(timeout 5 whois "$first_ip" 2>/dev/null | head -50)
+        local cloud_provider="Unknown"
+        
+        if echo "$whois_result" | grep -qi "amazon"; then
+            cloud_provider="AWS (Amazon)"
+        elif echo "$whois_result" | grep -qi "google"; then
+            cloud_provider="Google Cloud"
+        elif echo "$whois_result" | grep -qi "microsoft"; then
+            cloud_provider="Azure (Microsoft)"
+        elif echo "$whois_result" | grep -qi "digitalocean"; then
+            cloud_provider="DigitalOcean"
+        elif echo "$whois_result" | grep -qi "cloudflare"; then
+            cloud_provider="Cloudflare"
+        fi
         
         while IFS= read -r ip; do
             [ -z "$ip" ] && continue
-            
-            # AWS detection
-            local whois_result=$(whois "$ip" 2>/dev/null)
-            local cloud_provider="Unknown"
-            local org=""
-            
-            if echo "$whois_result" | grep -qi "amazon"; then
-                cloud_provider="AWS (Amazon)"
-                org=$(echo "$whois_result" | grep -i "OrgName" | head -1 | cut -d: -f2 | sed 's/^ *//')
-            elif echo "$whois_result" | grep -qi "google"; then
-                cloud_provider="Google Cloud"
-                org=$(echo "$whois_result" | grep -i "OrgName" | head -1 | cut -d: -f2 | sed 's/^ *//')
-            elif echo "$whois_result" | grep -qi "microsoft"; then
-                cloud_provider="Azure (Microsoft)"
-                org=$(echo "$whois_result" | grep -i "OrgName" | head -1 | cut -d: -f2 | sed 's/^ *//')
-            elif echo "$whois_result" | grep -qi "digitalocean"; then
-                cloud_provider="DigitalOcean"
-                org="DigitalOcean LLC"
-            elif echo "$whois_result" | grep -qi "cloudflare"; then
-                cloud_provider="Cloudflare"
-                org="Cloudflare Inc"
-            fi
-            
-            echo "| $ip | $cloud_provider | ${org:-N/A} |" >> "$REPORT_FILE"
-            log "DEBUG" "IP $ip - Provider: $cloud_provider"
+            echo "| $ip | $cloud_provider |" >> "$REPORT_FILE"
         done <<< "$ip_addresses"
         
         log "INFO" "Cloud infrastructure detection completed"
@@ -742,59 +726,33 @@ EOF
     
     # Certificate transparency logs
     log "DEBUG" "Querying certificate transparency..."
-    local ct_subdomains=$(curl -s "https://crt.sh/?q=%.${DOMAIN}&output=json" 2>/dev/null | \
-        grep -Po '"name_value":"[^"]*"' | cut -d'"' -f4 | sort -u | head -50)
+    local ct_subdomains=$(timeout 10 curl -s "https://crt.sh/?q=%.${DOMAIN}&output=json" 2>/dev/null | \
+        grep -Po '"name_value":"[^"]*"' | cut -d'"' -f4 | grep -v '*' | sort -u | head -20)
     
     if [ ! -z "$ct_subdomains" ]; then
         cat >> "$REPORT_FILE" << EOF
-### 📜 Certificate Transparency Logs
+### 📜 Certificate Transparency Logs (Top 20)
 
 | Subdomain | Status |
 |-----------|--------|
 EOF
         
+        local count=0
         while IFS= read -r subdomain; do
             [ -z "$subdomain" ] && continue
-            subdomain=$(echo "$subdomain" | tr -d '*' | xargs)
+            [ $count -ge 20 ] && break
+            subdomain=$(echo "$subdomain" | xargs)
             
-            if host "$subdomain" >/dev/null 2>&1; then
+            if timeout 2 host "$subdomain" >/dev/null 2>&1; then
                 local ip=$(dig +short "$subdomain" A 2>/dev/null | head -1)
                 echo "| $subdomain | ✅ Active ($ip) |" >> "$REPORT_FILE"
             else
                 echo "| $subdomain | ❌ Inactive |" >> "$REPORT_FILE"
             fi
+            ((count++))
         done <<< "$ct_subdomains"
-    fi
-    
-    cat >> "$REPORT_FILE" << EOF
-
-### 🔍 DNS Brute Force (Top Results)
-
-EOF
-    
-    # Try common subdomains
-    local common_subs=("www" "mail" "ftp" "admin" "test" "dev" "staging" "api" "blog" 
-                       "portal" "vpn" "remote" "webmail" "secure" "m" "mobile" 
-                       "support" "help" "shop" "store" "cdn" "static" "img" "images")
-    
-    local found=0
-    for sub in "${common_subs[@]}"; do
-        local full_sub="${sub}.${DOMAIN}"
-        if host "$full_sub" >/dev/null 2>&1; then
-            local ip=$(dig +short "$full_sub" A 2>/dev/null | head -1)
-            if [ $found -eq 0 ]; then
-                cat >> "$REPORT_FILE" << EOF
-| Subdomain | IP Address |
-|-----------|------------|
-EOF
-                found=1
-            fi
-            echo "| $full_sub | $ip |" >> "$REPORT_FILE"
-        fi
-    done
-    
-    if [ $found -eq 0 ]; then
-        echo "No additional subdomains found" >> "$REPORT_FILE"
+    else
+        echo "❌ **No certificate transparency data found**" >> "$REPORT_FILE"
     fi
     
     cat >> "$REPORT_FILE" << EOF
